@@ -1,31 +1,118 @@
-# 🚀 TripShare Infra: Redis Microservice Automation
+# 🏍️ TripShare - Plataforma de Mobilidade Urbana
 
-Script de provisionamento automatizado ("Infrastructure as Code") para configurar o microsserviço de Cache e Geolocalização em Tempo Real do projeto **TripShare**.
+> **Arquitetura de Microsserviços de Alta Performance para Logística e Transporte.**
 
-Este script transforma um container Linux limpo (LXC/Proxmox) em um servidor Redis de produção, aplicando as melhores práticas de segurança e performance.
+O **TripShare** é uma solução de backend robusta para aplicativos de transporte (semelhante ao Uber/99), focado em oferecer taxas justas para motoboys. O projeto foi construído utilizando o conceito de **Infrastructure as Code (IaC)**, com microsserviços isolados em containers LXC, orquestração Docker e comunicação via rede interna de baixa latência.
 
-## 🛡️ Funcionalidades e Hardening
+---
 
-Este script não apenas instala o Docker, mas prepara todo o ambiente:
+## 🏗️ Arquitetura do Sistema
 
-* **Limpeza do Sistema:** Remove serviços desnecessários (bloatware) do template Linux para reduzir a superfície de ataque.
-* **Firewall (UFW):** Configura "Deny All" por padrão e libera a porta `6379` **apenas** para a rede interna (`192.168.0.0/24`), protegendo o banco contra acessos externos.
-* **Kernel Tuning:** Aplica `vm.overcommit_memory = 1` automaticamente para evitar erros de alocação de memória sob alta carga.
-* **Docker Security:** Configura o container com persistência de dados (AOF/RDB) e define senha forte obrigatória (`--requirepass`).
-* **Log Rotation:** Configura o Docker para limitar o tamanho dos logs (Max 30MB), prevenindo o enchimento do disco.
+O sistema roda em um ambiente virtualizado **Proxmox**, onde cada responsabilidade é isolada em seu próprio container (LXC) para segurança e escalabilidade.
 
-## 📋 Pré-requisitos
+```mermaid
+graph TD
+    User([📱 App/Cliente]) -->|HTTPS| CF[Cloudflare Tunnel]
+    CF -->|Túnel Seguro| Nginx[Gateway Nginx .10]
+    
+    subgraph "Rede Interna (192.168.0.x)"
+        Nginx -->|Proxy Reverso| API[Backend Node.js .53]
+        API -->|Cache & PubSub| Redis[Redis .51]
+        API -->|SQL/Geo| DB[(PostGIS .50)]
+        API -->|Rotas/Custo| OSRM[Engine de Mapas .52]
+    end
+### 🧩 Componentes da Infraestrutura
 
-* Container LXC (Proxmox) com Debian 12 ou Ubuntu 22.04.
-* Opção **"Nesting"** habilitada nas configurações do Container.
-* Recursos mínimos: 1 Core, 512MB RAM.
+| Serviço | Tecnologia | Função | IP Interno (LXC) |
+| :--- | :--- | :--- | :--- |
+| **Gateway** | Nginx + Cloudflare | Proxy Reverso, SSL Offloading e Roteamento | `192.168.0.10` |
+| **Backend** | Node.js (Express) | API REST, Regras de Negócio e Precificação | `192.168.0.53` |
+| **Database** | PostgreSQL + PostGIS | Armazenamento de Usuários e Dados Geoespaciais | `192.168.0.50` |
+| **Cache** | Redis (Alpine) | Gerenciamento de Sessão e Tempo Real | `192.168.0.51` |
+| **Geo Engine** | OSRM (C++) | Cálculo de Rotas e Distâncias (Mapas Offline) | `192.168.0.52` |
 
-## 🚀 Como Usar
+## 🚀 Funcionalidades Principais
 
-1. Acesse o terminal do seu container LXC.
-2. Baixe o script `install_redis.sh` deste repositório.
-3. Dê permissão de execução e rode:
+* **Cálculo de Rotas Offline:** Utiliza uma instância própria do OSRM com mapas da região Norte do Brasil, eliminando custos com APIs externas (Google Maps).
+* **Precificação Dinâmica:** Algoritmo que calcula o valor justo da corrida baseada em `(Km * Tarifa) + (Tempo * Tarifa)`.
+* **Geolocalização:** Armazenamento e consulta de coordenadas geográficas (Latitude/Longitude) com precisão via PostGIS.
+* **Segurança (Hardening):**
+    * Todos os serviços rodam atrás de um Firewall (UFW) com política "Deny All".
+    * Acesso externo apenas via Cloudflare Tunnel (Portas do roteador fechadas).
+    * Variáveis de ambiente (`.env`) para proteção de credenciais.
+* **Alta Disponibilidade:** Serviços configurados com `PM2` e `Docker Restart Policies` para recuperação automática.
+
+## 📂 Estrutura do Repositório (Monorepo)
 
 ```bash
+tripshare/
+├── backend/           # Código Fonte da API (Node.js)
+│   ├── server.js      # Entrypoint e Rotas
+│   └── src/           # Lógica de aplicação
+├── database/          # Modelagem de Dados
+│   └── schema.sql     # Estrutura das tabelas (Usuários, Corridas, Geo)
+├── infra/             # Infrastructure as Code (Scripts de Provisionamento)
+│   ├── install_redis.sh    # Script de Hardening + Deploy Redis
+│   ├── install_osrm.sh     # Script de Compilação de Mapas + OSRM
+│   ├── install_backend.sh  # Setup de ambiente Node + PM2
+│   └── nginx/              # Configurações do Gateway
+└── docs/              # Documentação técnica e diagramas
+
+## 🛠️ Instalação e Reprodução
+
+Este projeto foi desenhado para ser agnóstico, mas os scripts de automação em `infra/` são otimizados para **Debian/Ubuntu em LXC**.
+
+### 1. Pré-requisitos
+* Servidor Proxmox ou Máquina Linux (Ubuntu 22.04+).
+* Docker e Docker Compose instalados.
+
+### 2. Subindo os Microsserviços
+Cada serviço possui seu script de "Auto Deploy". Exemplo para subir o Banco de Dados:
+
+```bash
+# Exemplo de provisionamento
+cd infra
 chmod +x install_redis.sh
 ./install_redis.sh
+
+## 🔌 API Endpoints
+
+### 1. Health Check
+`GET /`
+> Verifica se a API e os microsserviços estão online.
+
+### 2. Simular Corrida
+`POST /api/simular-corrida`
+> Calcula o preço e rota sem salvar no banco.
+```json
+{
+  "origem": "-48.4806,-1.4500",
+  "destino": "-48.4598,-1.4397"
+}
+
+### 3. Solicitar Corrida
+`POST /api/solicitar-corrida`
+> Registra o pedido, persiste no PostgreSQL e inicia o fluxo.
+```json
+{
+  "id_passageiro": 1,
+  "origem": "-48.4806,-1.4500",
+  "destino": "-48.4598,-1.4397"
+}
+```
+
+---
+
+## 📝 Próximos Passos (Roadmap)
+
+* [x] Infraestrutura Base (LXC/Docker)
+* [x] Gateway e SSL (Nginx/Cloudflare)
+* [x] Banco de Dados Geoespacial
+* [x] Engine de Rotas (OSRM)
+* [ ] Autenticação JWT
+* [ ] Comunicação em Tempo Real (Socket.io + Redis Pub/Sub)
+* [ ] App Mobile (React Native)
+
+---
+
+Developed with 💜 by **Davidson**
