@@ -30,6 +30,7 @@ const REDIS_URL = process.env.REDIS_URL || 'redis://:SenhaForteTripShare2025@192
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use(express.static('public'));
 
 // --- NOVIDADE 2: Criar Servidor Híbrido (Express + Socket) ---
 const server = http.createServer(app);
