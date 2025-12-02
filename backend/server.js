@@ -71,15 +71,32 @@ app.get('/', (req, res) => res.json({ status: 'TripShare API + Socket Realtime' 
 
 // ROTA DE SOLICITAR CORRIDA
 app.post('/api/solicitar-corrida', async (req, res) => {
-    const { id_passageiro, origem, destino } = req.body;
-
-    if (!id_passageiro || !origem || !destino) return res.status(400).json({ erro: 'Dados incompletos' });
-
     try {
+        console.log("📥 Recebi pedido:", req.body); // LOG NOVO: Ver o que chegou do celular
+
+        const { id_passageiro, origem, destino } = req.body;
+
+        if (!id_passageiro || !origem || !destino) {
+            console.error("❌ Faltam dados no pedido");
+            return res.status(400).json({ erro: 'Dados incompletos' });
+        }
+
+        // --- CORREÇÃO DE FORMATO ---
+        // Garante que seja string antes de dar split
+        const strOrigem = String(origem);
+        const strDestino = String(destino);
+
         // 1. Calcular Rota (OSRM)
-        const urlOSRM = `${OSRM_URL_BASE}/${origem};${destino}?overview=false`;
+        // OSRM espera: longitude,latitude
+        const urlOSRM = `${OSRM_URL_BASE}/${strOrigem};${strDestino}?overview=full&geometries=geojson`;
+        console.log("🗺️ Consultando OSRM:", urlOSRM); // LOG NOVO
+
         const response = await axios.get(urlOSRM);
-        if (response.data.code !== 'Ok') throw new Error('Erro OSRM');
+        
+        if (response.data.code !== 'Ok') {
+            console.error("❌ Erro OSRM:", response.data);
+            throw new Error('OSRM não encontrou rota');
+        }
 
         const rota = response.data.routes[0];
         const km = rota.distance / 1000;
@@ -88,39 +105,45 @@ app.post('/api/solicitar-corrida', async (req, res) => {
         preco = parseFloat(preco.toFixed(2));
 
         // 2. Salvar no Banco
+        // Precisamos separar Longitude e Latitude para o PostGIS
+        const [lonOrig, latOrig] = strOrigem.split(',');
+        const [lonDest, latDest] = strDestino.split(',');
+
         const query = `
             INSERT INTO corridas (
                 id_passageiro, origem_texto, destino_texto, 
                 distancia_km, tempo_minutos, valor_total,
                 origem_geom, destino_geom, status
-            ) VALUES ($1, 'Origem GPS', 'Destino GPS', $2, $3, $4, 
+            ) VALUES ($1, 'App Mobile', 'App Mobile', $2, $3, $4, 
                 ST_SetSRID(ST_MakePoint($5, $6), 4326),
                 ST_SetSRID(ST_MakePoint($7, $8), 4326),
                 'pendente'
             ) RETURNING id;
         `;
-        const [lonOrig, latOrig] = origem.split(',');
-        const [lonDest, latDest] = destino.split(',');
         
         const dbRes = await pool.query(query, [id_passageiro, km, min, preco, lonOrig, latOrig, lonDest, latDest]);
         const novaCorrida = dbRes.rows[0];
 
-        // --- NOVIDADE 4: O GRITO DE ALERTA 📢 ---
-        // Aqui enviamos o aviso para todos os celulares conectados na sala 'motoristas_disponiveis'
-        io.to('motoristas_disponiveis').emit('alerta_corrida', {
-            id_corrida: novaCorrida.id,
-            valor: preco,
-            distancia: `${km.toFixed(1)} km`,
-            tempo: `${min.toFixed(0)} min`
-        });
-        
-        console.log(`📡 Alerta enviado para motoboys: Corrida #${novaCorrida.id}`);
+        // 3. Alerta Socket
+        if(io) {
+            io.to('motoristas_disponiveis').emit('alerta_corrida', {
+                id_corrida: novaCorrida.id,
+                valor: preco,
+                distancia: `${km.toFixed(1)} km`,
+                tempo: `${min.toFixed(0)} min`,
+                geometria: rota.geometry
+            });
+        }
 
-        res.json({ sucesso: true, id_corrida: novaCorrida.id, status: 'buscando_moto' });
+        console.log(`✅ Sucesso! Corrida #${novaCorrida.id} criada.`);
+        res.json({ sucesso: true, id_corrida: novaCorrida.id, status: 'buscando_moto', valor: preco });
 
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ erro: 'Erro interno' });
+        // Isso vai mostrar o erro real no log do servidor em vez de só explodir
+        console.error("🚨 ERRO CRÍTICO NO BACKEND:", error.message);
+        if(error.response) console.error("Detalhes:", error.response.data);
+        
+        res.status(500).json({ erro: 'Erro interno ao processar corrida: ' + error.message });
     }
 });
 
