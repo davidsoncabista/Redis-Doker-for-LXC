@@ -95,15 +95,9 @@ io.on('connection', (socket) => {
 });
 
 // ========================================================
-// 8. MIDDLEWARE DE SEGURANÇA (JWT) - DESATIVADO PARA MVP
+// 8. MIDDLEWARE DE SEGURANÇA (JWT)
 // ========================================================
-// 🔧 PARA ATIVAR AUTENTICAÇÃO: remova o 'return next()' abaixo e use nas rotas
 function autenticarToken(req, res, next) {
-    // ⚠️ MODO MVP: DESATIVADO - remova a linha abaixo para ativar
-    return next();
-    
-    // ⬇️ CÓDIGO DE AUTENTICAÇÃO (comentado para MVP)
-    /*
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1]; 
 
@@ -114,7 +108,6 @@ function autenticarToken(req, res, next) {
         req.usuario = usuario;
         next();
     });
-    */
 }
 
 // ========================================================
@@ -172,7 +165,7 @@ app.get('/api/health', (req, res) => {
     res.json({ 
         status: 'OK', 
         api: 'tripshare',
-        modo: 'MVP (sem autenticação)',
+        modo: 'Autenticação Ativa',
         tempo: new Date().toISOString()
     });
 });
