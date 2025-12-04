@@ -302,6 +302,48 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
+// ========================================================
+// NOVA ROTA: FINALIZAR CORRIDA 🏁
+// ========================================================
+app.post('/api/finalizar-corrida', async (req, res) => {
+    const { id_corrida } = req.body;
+
+    if (!id_corrida) return res.status(400).json({ erro: 'ID obrigatório' });
+
+    try {
+        const query = `
+            UPDATE corridas 
+            SET status = 'finalizada', 
+                finalizado_em = NOW()
+            WHERE id = $1
+            RETURNING *;
+        `;
+        
+        const dbRes = await pool.query(query, [id_corrida]);
+
+        if (dbRes.rowCount === 0) {
+            return res.status(404).json({ erro: 'Corrida não encontrada.' });
+        }
+
+        console.log(`🏁 Corrida #${id_corrida} finalizada.`);
+
+        if(io) {
+            io.emit('status_corrida', {
+                tipo: 'FINALIZADA',
+                id_corrida: id_corrida,
+                status: 'finalizada',
+                msg: 'Corrida finalizada!'
+            });
+        }
+
+        res.json({ sucesso: true });
+
+    } catch (error) {
+        console.error("Erro finalizar:", error);
+        res.status(500).json({ erro: 'Erro interno' });
+    }
+});
+
 // ATENÇÃO: Mudou de 'app.listen' para 'server.listen'
 server.listen(PORTA_API, () => {
     console.log(`🚀 TripShare Backend rodando na porta ${PORTA_API}`);
